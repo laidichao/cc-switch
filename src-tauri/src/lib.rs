@@ -19,6 +19,9 @@ mod grok_config;
 pub mod hermes_config;
 mod init_status;
 mod jsonc_document;
+mod codex_desktop_proxy;
+mod codex_hosts;
+mod codex_system_proxy;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
@@ -350,6 +353,8 @@ async fn update_tray_menu(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 固定 hosts 辅助操作先退出，提权分支不加载普通界面和用户配置。
+    codex_hosts::helper_entry();
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
     panic_hook::setup_panic_hook();
 
@@ -680,6 +685,11 @@ pub fn run() {
             // 补完上次崩溃时写到一半的客户端文件（写前意图在 ~/.cc-switch/live-state.json），
             // 要在任何写客户端文件的启动步骤之前。
             crate::mode::operation::recover_on_startup(&app_state.db);
+            // 在导入、通用片段提取前恢复上次桌面代理写入，避免把临时功能键当成用户配置。
+            let desktop_recovery_error = crate::codex_desktop_proxy::restore().err();
+            if let Some(error) = &desktop_recovery_error {
+                log::warn!("[CodexDesktopProxy] early recovery failed: {error}");
+            }
 
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
@@ -1256,6 +1266,10 @@ pub fn run() {
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
                 crate::mode::controller::startup(&state).await;
+                // 供应商投影完成后恢复桌面域名代理；失败保留为设置页的错误状态。
+                if let Err(error) = state.codex_desktop_proxy.initialize(&state, desktop_recovery_error).await {
+                    log::warn!("[CodexDesktopProxy] startup failed: {error}");
+                }
                 // 启动流程走完：托盘这时才开始报「路由服务没在运行」，并记下退回直连的应用。
                 crate::tray::mark_startup_settled(&app_handle);
                 // Codex 官方做路由、发布了 Stack 模型时，官方模型列表过期就在后台刷新。
@@ -1718,6 +1732,8 @@ pub fn run() {
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
+            commands::get_codex_desktop_proxy_status,
+            commands::set_codex_desktop_proxy_enabled,
             commands::test_proxy_url,
             commands::get_upstream_proxy_status,
             commands::scan_local_proxies,
@@ -1819,7 +1835,16 @@ pub fn run() {
             let app_handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 save_window_state_before_exit(&app_handle);
-                cleanup_before_exit(&app_handle).await;
+                // hosts 恢复被拒绝时取消正常退出，保留转发以便用户重试关闭。
+                if let Err(error) = cleanup_before_exit(&app_handle).await {
+                    log::error!("[CodexDesktopProxy] exit cancelled: {error}");
+                    let dialogs = app_handle.dialog();
+                    let message = format!("恢复代理设置失败，退出已取消 / Proxy restoration failed; exit cancelled\n{error}");
+                    let dialog = dialogs.message(message);
+                    let dialog = dialog.kind(MessageDialogKind::Error);
+                    dialog.show(|_| {});
+                    return;
+                }
                 // 先于 std::process::exit 显式移除托盘图标。
                 // 进程直接退出时 Tauri 运行时不走正常 Drop 流程，
                 // 不会向 Windows Shell 发送 NIM_DELETE，导致已退出的进程
@@ -1951,11 +1976,14 @@ pub fn run() {
 ///
 /// 把接上代理的客户端都指回直连（模式和代理路由保留，下次启动再接上），再停止代理。
 /// 客户端不能一直指着代理：开机自启默认关闭，CC Switch 一关客户端就连不上了。
-pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
+pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) -> Result<(), String> {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
+        // 先恢复本功能的 hosts 和 PAC，再关闭转发；失败时取消普通退出。
+        state.codex_desktop_proxy.stop(&state).await?;
         crate::mode::controller::detach_all(state.inner()).await;
         log::info!("退出清理完成：客户端已指回直连，代理已停止");
     }
+    Ok(())
 }
 
 /// 系统终止应用时最多等退出清理这么久：停代理服务自带 5 秒超时，指回直连只是写几个文件。
@@ -1974,11 +2002,13 @@ fn cleanup_before_system_exit(app_handle: &tauri::AppHandle) {
     let finished = tauri::async_runtime::block_on(async move {
         tokio::time::timeout(SYSTEM_EXIT_CLEANUP_TIMEOUT, task).await
     });
-    if finished.is_err() {
-        log::warn!(
+    match finished {
+        Ok(Ok(Ok(()))) => {}
+        Ok(Ok(Err(error))) => log::error!("系统退出时代理恢复失败，下次启动重试: {error}"),
+        _ => log::warn!(
             "退出清理 {} 秒内没做完，直接退出",
             SYSTEM_EXIT_CLEANUP_TIMEOUT.as_secs()
-        );
+        ),
     }
 }
 

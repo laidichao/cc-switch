@@ -32,7 +32,12 @@ pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<
 /// 执行顺序：先验证 → 写 DB → 再应用
 /// 这样确保 DB 写失败时不会出现运行态与持久化不一致的问题
 #[tauri::command]
-pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> Result<(), String> {
+pub async fn set_global_proxy_url(
+    state: tauri::State<'_, AppState>,
+    url: String,
+) -> Result<(), String> {
+    // 保存上游与桌面域名代理开关串行执行，防止启用期间丢失上游配置。
+    let _gate = state.codex_desktop_proxy.gate.lock().await;
     // 调试：显示接收到的 URL 信息（不包含敏感内容）
     let has_auth = url.contains('@') && (url.starts_with("http://") || url.starts_with("socks"));
     log::debug!(
@@ -47,17 +52,41 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
         Some(url.as_str())
     };
 
+    // 桌面入口首版依赖 CONNECT；普通出站设置仍支持原有 SOCKS 协议。
+    let desktop_enabled = state
+        .db
+        .get_bool_flag(crate::codex_desktop_proxy::ENABLED_KEY)
+        .map_err(|error| error.to_string())?;
+    if desktop_enabled {
+        crate::codex_desktop_proxy::validate_upstream(url_opt)?;
+    }
+
     // 1. 先验证代理配置是否有效（不应用）
     http_client::validate_proxy(url_opt)?;
 
     // 2. 验证成功后保存到数据库
+    // 留存旧值，仅在运行态更新失败时恢复数据库，避免新配置与客户端不一致。
+    let previous = state
+        .db
+        .get_global_proxy_url()
+        .map_err(|error| error.to_string())?;
     state
         .db
         .set_global_proxy_url(url_opt)
         .map_err(|e| e.to_string())?;
 
     // 3. DB 写入成功后再应用到运行态
-    http_client::apply_proxy(url_opt)?;
+    if let Err(error) = http_client::apply_proxy(url_opt) {
+        // 回滚数据库；共享客户端可能已完成部分更新，因此也恢复原客户端配置。
+        state
+            .db
+            .set_global_proxy_url(previous.as_deref())
+            .map_err(|failure| format!("{error}; restore failed: {failure}"))?;
+        // 确保 CCS 转发与桌面入口重新使用同一个上游。
+        http_client::apply_proxy(previous.as_deref())
+            .map_err(|failure| format!("{error}; client restore failed: {failure}"))?;
+        return Err(error);
+    }
 
     log::info!(
         "[GlobalProxy] [GP-009] Configuration updated: {}",
@@ -67,6 +96,25 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
     );
 
     Ok(())
+}
+
+/// 查询本地转发与系统 PAC 状态；不将就绪等同于远程或桌面登录成功。
+#[tauri::command]
+pub async fn get_codex_desktop_proxy_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::codex_desktop_proxy::DesktopProxyStatus, String> {
+    // 读取持久化意图和当前服务状态供设置页显示。
+    state.codex_desktop_proxy.status(&state.db).await
+}
+
+/// 在现有出站设置旁启用桌面官方域名代理，不启动或重启 Codex。
+#[tauri::command]
+pub async fn set_codex_desktop_proxy_enabled(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    // 生命周期负责串行化、配置所有权和失败回滚。
+    state.codex_desktop_proxy.set_enabled(&state, enabled).await
 }
 
 /// 代理测试结果

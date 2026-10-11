@@ -329,7 +329,7 @@ pub async fn send_request(
 /// When the proxy URL uses `https://`, the connection to the proxy itself is
 /// TLS-wrapped before sending the CONNECT request.  The enum lets
 /// `send_raw_request` work with either variant generically.
-enum ProxyStream {
+pub(crate) enum ProxyStream {
     Tcp(tokio::net::TcpStream),
     Tls(Box<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>),
 }
@@ -460,16 +460,23 @@ async fn send_raw_request(
 /// 2. Send `CONNECT host:port HTTP/1.1` with optional `Proxy-Authorization`
 /// 3. Read the proxy's 200 response (407 → `AuthError`)
 /// 4. Return the tunneled stream (ready for target TLS handshake + raw write)
-async fn connect_via_proxy(
+pub(crate) async fn connect_via_proxy(
     proxy_url: &str,
     target_host: &str,
     target_port: u16,
 ) -> Result<ProxyStream, ProxyError> {
     use base64::Engine;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let parsed = url::Url::parse(proxy_url)
         .map_err(|e| ProxyError::ForwardFailed(format!("Invalid proxy URL: {e}")))?;
+
+    // 本地桌面入口与模型转发共享此隧道；禁止把 SOCKS URL 当 HTTP 发送凭据。
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(ProxyError::ForwardFailed(
+            "HTTP CONNECT requires an HTTP/HTTPS proxy".into(),
+        ));
+    }
 
     let proxy_host = parsed
         .host_str()
@@ -480,8 +487,24 @@ async fn connect_via_proxy(
 
     // Build Proxy-Authorization header if credentials are present
     let proxy_auth = if !parsed.username().is_empty() {
+        // URL 中的百分号编码必须还原后再生成 Basic 认证，兼容含特殊字符的账号。
+        let username_query = format!(
+            "value={}",
+            parsed.username().replace('+', "%2B").replace('&', "%26")
+        );
+        let mut username_parts = url::form_urlencoded::parse(username_query.as_bytes());
+        let username = username_parts
+            .next()
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_default();
         let password = parsed.password().unwrap_or("");
-        let credentials = format!("{}:{}", parsed.username(), password);
+        let password_query = format!("value={}", password.replace('+', "%2B").replace('&', "%26"));
+        let mut password_parts = url::form_urlencoded::parse(password_query.as_bytes());
+        let password = password_parts
+            .next()
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_default();
+        let credentials = format!("{username}:{password}");
         let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
         Some(format!("Proxy-Authorization: Basic {encoded}\r\n"))
     } else {
@@ -526,43 +549,43 @@ async fn connect_via_proxy(
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("CONNECT flush failed: {e}")))?;
 
-    // Read the proxy's response status line
-    let mut reader = BufReader::new(&mut stream);
-    let mut status_line = String::new();
-    reader
-        .read_line(&mut status_line)
-        .await
-        .map_err(|e| ProxyError::ForwardFailed(format!("CONNECT read failed: {e}")))?;
-
-    // Expect "HTTP/1.1 200 ..." or "HTTP/1.0 200 ..."
-    if !status_line.contains(" 200 ") {
-        if status_line.contains(" 407 ") {
-            return Err(ProxyError::AuthError(format!(
-                "Proxy authentication required (407): {}",
-                status_line.trim()
-            )));
-        }
-        return Err(ProxyError::ForwardFailed(format!(
-            "Proxy CONNECT rejected: {}",
-            status_line.trim()
-        )));
-    }
-
-    // Drain remaining response headers (until empty line)
+    // Read the proxy's response status line and drain remaining response headers.
+    // 限制头部长度且精确读取到结束位置，避免 BufReader 丢弃已预读的隧道字节。
+    let mut response_head = Vec::new();
     loop {
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
+        let byte = stream
+            .read_u8()
             .await
             .map_err(|e| ProxyError::ForwardFailed(format!("CONNECT header read: {e}")))?;
-        if line.trim().is_empty() {
+        response_head.push(byte);
+        if response_head.ends_with(b"\r\n\r\n") {
             break;
         }
+        if response_head.len() >= 16384 {
+            return Err(ProxyError::ForwardFailed(
+                "Proxy CONNECT headers too large".into(),
+            ));
+        }
     }
-    // BufReader might have buffered data; drop it to get raw stream back.
-    // Since CONNECT response is headers-only (no body), and we read until \r\n\r\n,
-    // the BufReader buffer should be empty at this point.
-    drop(reader);
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut response = httparse::Response::new(&mut headers);
+    let parsed_head = response.parse(&response_head);
+    if !matches!(parsed_head, Ok(httparse::Status::Complete(_))) {
+        return Err(ProxyError::ForwardFailed(
+            "Invalid proxy CONNECT response".into(),
+        ));
+    }
+    if response.code == Some(407) {
+        return Err(ProxyError::AuthError(
+            "Proxy authentication required (407)".into(),
+        ));
+    }
+    if !matches!(response.code, Some(200..=299)) {
+        return Err(ProxyError::ForwardFailed(format!(
+            "Proxy CONNECT rejected: {:?}",
+            response.code
+        )));
+    }
 
     log::debug!(
         "[HyperClient] CONNECT tunnel established via {proxy_host}:{proxy_port} -> {target_host}:{target_port}"

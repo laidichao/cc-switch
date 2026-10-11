@@ -233,15 +233,16 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
     crate::save_window_state_before_exit(&app);
+    // 安排重启前恢复 hosts；拒绝权限时向原界面返回错误并保留当前转发。
+    crate::cleanup_before_exit(&app).await?;
 
     // 在后台延迟重启，让函数有时间返回响应
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         // 本命令用于 app_config_dir 变更后的重启：新实例会切到新数据库，拿不到
         // 旧库里的 Live 备份，无法恢复被接管的 Live 配置。因此必须趁旧实例的
-        // 事件循环仍存活，在这里同步完成恢复（保留代理状态，新实例启动时自动
+        // 事件循环仍存活，在安排重启前完成恢复（保留代理状态，新实例启动时自动
         // 重新接管）。
-        crate::cleanup_before_exit(&app).await;
         // 与自更新共用 restart_process，而不是 app.restart()：macOS 上经
         // LaunchServices 启动，新窗口才能回到前台。
         crate::restart_process(&app);
@@ -298,7 +299,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
         // NIM_DELETE，会残留死图标——与托盘"退出"路径相同的问题）。
         // 因此清理只能放在 install 前执行，且必须显式移除托盘图标。
         crate::save_window_state_before_exit(&app);
-        crate::cleanup_before_exit(&app).await;
+        crate::cleanup_before_exit(&app).await?;
         crate::remove_tray_icon_before_exit(&app);
         crate::destroy_single_instance_lock(&app);
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -318,7 +319,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
             .map_err(|e| format!("安装更新失败: {e}"))?;
 
         crate::save_window_state_before_exit(&app);
-        crate::cleanup_before_exit(&app).await;
+        crate::cleanup_before_exit(&app).await?;
 
         log::info!("应用更新安装完成，正在重启应用");
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

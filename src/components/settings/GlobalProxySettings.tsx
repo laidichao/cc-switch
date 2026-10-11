@@ -8,13 +8,17 @@ import { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { HelpTip } from "@/components/ui/help-tip";
 import { Loader2, TestTube2, Search, Eye, EyeOff, X } from "lucide-react";
 import {
   useGlobalProxyUrl,
   useSetGlobalProxyUrl,
   useTestProxy,
   useScanProxies,
+  useCodexDesktopProxyStatus,
+  useSetCodexDesktopProxyEnabled,
   type DetectedProxy,
 } from "@/hooks/useGlobalProxy";
 
@@ -76,6 +80,8 @@ export function GlobalProxySettings() {
   const setMutation = useSetGlobalProxyUrl();
   const testMutation = useTestProxy();
   const scanMutation = useScanProxies();
+  const desktopQuery = useCodexDesktopProxyStatus();
+  const desktopMutation = useSetCodexDesktopProxyEnabled();
 
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
@@ -138,6 +144,29 @@ export function GlobalProxySettings() {
       handleSave();
     }
   };
+
+  const handleDesktopChange = (enabled: boolean) => {
+    // 后端返回成功后再更新开关，避免系统代理失败却显示已经开启。
+    desktopMutation.mutate(enabled);
+  };
+
+  // 帮助卡与无障碍状态共用文案，保留原有代理就绪判断。
+  const desktopStatusText = desktopQuery.isLoading
+    ? t("common.loading")
+    : desktopQuery.isError
+      ? t("settings.globalProxy.desktopReadFailed")
+      : !desktopQuery.data?.supported
+        ? t("settings.globalProxy.desktopUnsupported")
+        : desktopQuery.data?.error
+          ? desktopQuery.data.error
+          : !desktopQuery.data?.enabled
+            ? t("settings.globalProxy.desktopDisabled")
+            : desktopQuery.data.running &&
+                desktopQuery.data.systemProxyApplied &&
+                desktopQuery.data.backendConfigApplied &&
+                desktopQuery.data.websocketForwardingApplied
+              ? t("settings.globalProxy.desktopReady")
+              : t("settings.globalProxy.desktopInactive");
 
   // 只在首次加载且无数据时显示加载状态
   if (isLoading && savedUrl === undefined) {
@@ -208,7 +237,9 @@ export function GlobalProxySettings() {
         </HoverTip>
         <Button
           onClick={handleSave}
-          disabled={!dirty || setMutation.isPending}
+          disabled={
+            !dirty || setMutation.isPending || desktopMutation.isPending
+          }
           size="sm"
         >
           {setMutation.isPending && (
@@ -257,6 +288,46 @@ export function GlobalProxySettings() {
             )}
           </Button>
         </div>
+      </div>
+
+      {/* 复用现有出站配置；不增加 Codex 启动按钮。 */}
+      <div className="rounded-md border p-3">
+        <div className="flex min-h-11 items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-1">
+            <label
+              htmlFor="codex-desktop-proxy"
+              className="text-sm font-medium"
+            >
+              {t("settings.globalProxy.desktopLabel")}
+            </label>
+            <HelpTip
+              title={t("settings.globalProxy.desktopLabel")}
+              className="h-11 w-11"
+            >
+              <p className="text-xs text-fg-2">
+                {t("settings.globalProxy.desktopHint")}
+              </p>
+              <p className="mt-2 break-words text-xs text-fg-2">
+                {desktopStatusText}
+              </p>
+            </HelpTip>
+          </div>
+          <Switch
+            id="codex-desktop-proxy"
+            checked={desktopQuery.data?.enabled ?? false}
+            disabled={
+              desktopQuery.isLoading ||
+              (!desktopQuery.data?.supported && !desktopQuery.data?.enabled) ||
+              desktopMutation.isPending ||
+              setMutation.isPending ||
+              (!desktopQuery.data?.enabled && (dirty || !savedUrl))
+            }
+            onCheckedChange={handleDesktopChange}
+          />
+        </div>
+        <p className="sr-only" role="status" aria-live="polite">
+          {desktopStatusText}
+        </p>
       </div>
 
       {/* 扫描结果 */}

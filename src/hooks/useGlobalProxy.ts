@@ -13,6 +13,8 @@ import {
   testProxyUrl,
   getUpstreamProxyStatus,
   scanLocalProxies,
+  getCodexDesktopProxyStatus,
+  setCodexDesktopProxyEnabled,
   type ProxyTestResult,
   type UpstreamProxyStatus,
   type DetectedProxy,
@@ -42,6 +44,7 @@ export function useSetGlobalProxyUrl() {
       toast.success(t("settings.globalProxy.saved"));
       queryClient.invalidateQueries({ queryKey: ["globalProxyUrl"] });
       queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
+      queryClient.invalidateQueries({ queryKey: ["codexDesktopProxyStatus"] });
     },
     onError: (error: unknown) => {
       const message =
@@ -107,3 +110,32 @@ export function useScanProxies() {
 }
 
 export type { DetectedProxy };
+
+/** 查询本地转发状态，设置页显示期间检测外部系统代理变更。 */
+export function useCodexDesktopProxyStatus() {
+  return useQuery({
+    queryKey: ["codexDesktopProxyStatus"],
+    queryFn: getCodexDesktopProxyStatus,
+    refetchInterval: 5000,
+  });
+}
+
+/** 保存开关后重新读取状态，失败时保留原开关并显示后端原因。 */
+export function useSetCodexDesktopProxyEnabled() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: setCodexDesktopProxyEnabled,
+    onSuccess: () => {
+      toast.success(t("settings.globalProxy.desktopSaved"));
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(t("settings.globalProxy.saveFailed", { error: message }));
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["codexDesktopProxyStatus"] });
+    },
+  });
+}

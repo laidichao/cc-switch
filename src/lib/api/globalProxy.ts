@@ -32,6 +32,29 @@ export interface DetectedProxy {
   port: number;
 }
 
+/** 本地服务和系统 PAC 状态，不表示官方登录已经通过验证。 */
+export interface CodexDesktopProxyStatus {
+  supported: boolean;
+  enabled: boolean;
+  running: boolean;
+  systemProxyApplied: boolean;
+  backendConfigApplied: boolean;
+  websocketForwardingApplied: boolean;
+  error: string | null;
+}
+
+/** 查询桌面域名代理的实际运行状态。 */
+export async function getCodexDesktopProxyStatus(): Promise<CodexDesktopProxyStatus> {
+  return invoke<CodexDesktopProxyStatus>("get_codex_desktop_proxy_status");
+}
+
+/** 修改桌面域名代理开关，由后端完成设置备份及恢复。 */
+export async function setCodexDesktopProxyEnabled(
+  enabled: boolean,
+): Promise<void> {
+  return invoke("set_codex_desktop_proxy_enabled", { enabled });
+}
+
 /**
  * 获取全局代理 URL
  *
