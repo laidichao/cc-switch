@@ -15,6 +15,7 @@
 //! - Provider 通过 meta.authBinding 关联账号
 //! - 自动迁移 v1 单账号格式到 v3 多账号 + 默认账号格式
 
+use crate::proxy::outbound_stats::TrackedSend;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -752,7 +753,8 @@ impl CopilotAuthManager {
                 ("client_id", github_client_id(&domain)),
                 ("scope", "read:user"),
             ])
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         if !response.status().is_success() {
@@ -797,7 +799,8 @@ impl CopilotAuthManager {
                 ("device_code", device_code),
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ])
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         let oauth_response: GitHubOAuthResponse = response
@@ -992,7 +995,8 @@ impl CopilotAuthManager {
             .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
             .header("user-agent", COPILOT_USER_AGENT)
             .header("x-github-api-version", COPILOT_API_VERSION)
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         if !response.status().is_success() {
@@ -1106,7 +1110,8 @@ impl CopilotAuthManager {
             .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
             .header("user-agent", COPILOT_USER_AGENT)
             .header("x-github-api-version", COPILOT_API_VERSION)
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -1220,7 +1225,8 @@ impl CopilotAuthManager {
             .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
             .header("user-agent", COPILOT_USER_AGENT)
             .header("x-github-api-version", COPILOT_API_VERSION)
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -1495,7 +1501,8 @@ impl CopilotAuthManager {
             .header("User-Agent", COPILOT_USER_AGENT)
             .header("Editor-Version", COPILOT_EDITOR_VERSION)
             .header("Editor-Plugin-Version", COPILOT_PLUGIN_VERSION)
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         if !response.status().is_success() {
@@ -1527,7 +1534,8 @@ impl CopilotAuthManager {
             .header("User-Agent", COPILOT_USER_AGENT)
             .header("Editor-Version", COPILOT_EDITOR_VERSION)
             .header("Editor-Plugin-Version", COPILOT_PLUGIN_VERSION)
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {

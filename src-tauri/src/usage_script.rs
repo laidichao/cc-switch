@@ -1,3 +1,4 @@
+use crate::proxy::outbound_stats::TrackedSend;
 use rquickjs::{Context, Function, Runtime};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -274,13 +275,17 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
     }
 
     // 发送请求
-    let resp = req.send().await.map_err(|e| {
-        AppError::localized(
-            "usage_script.request_failed",
-            format!("请求失败: {e}"),
-            format!("Request failed: {e}"),
-        )
-    })?;
+    let resp = req
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
+        .await
+        .map_err(|e| {
+            AppError::localized(
+                "usage_script.request_failed",
+                format!("请求失败: {e}"),
+                format!("Request failed: {e}"),
+            )
+        })?;
 
     let status = resp.status();
     let text = resp.text().await.map_err(|e| {

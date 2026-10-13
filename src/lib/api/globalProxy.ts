@@ -21,6 +21,13 @@ export interface ProxyTestResult {
 export interface UpstreamProxyStatus {
   enabled: boolean;
   proxyUrl: string | null;
+  stats: {
+    successful: number;
+    networkFailures: number;
+    httpErrors: number;
+    tunnelSuccessful: number;
+    tunnelFailures: number;
+  };
 }
 
 /**
@@ -58,10 +65,22 @@ export async function setCodexDesktopProxyEnabled(
 /**
  * 获取全局代理 URL
  *
- * @returns 代理 URL，null 表示未配置（直连）
+ * @returns 保存的代理 URL，关闭开关时仍保留；null 表示未配置
  */
 export async function getGlobalProxyUrl(): Promise<string | null> {
   return invoke<string | null>("get_global_proxy_url");
+}
+
+/** 获取持久化的出站代理开关，地址独立保留。 */
+export async function getGlobalProxyEnabled(): Promise<boolean> {
+  // 读取后端兼容旧配置后的启用状态。
+  return invoke<boolean>("get_global_proxy_enabled");
+}
+
+/** 切换出站代理，后端热更新客户端并保留认证配置。 */
+export async function setGlobalProxyEnabled(enabled: boolean): Promise<void> {
+  // 将开关交给后端持久化并应用，失败由调用方显示。
+  return invoke("set_global_proxy_enabled", { enabled });
 }
 
 /**
@@ -87,6 +106,14 @@ export async function setGlobalProxyUrl(url: string): Promise<void> {
  */
 export async function testProxyUrl(url: string): Promise<ProxyTestResult> {
   return invoke<ProxyTestResult>("test_proxy_url", { url });
+}
+
+/** 测量已保存且启用的代理，探测流量不计入业务成功率。 */
+export async function measureGlobalProxyLatency(
+  url: string,
+): Promise<ProxyTestResult> {
+  // 后端验证地址仍匹配当前配置，再复用共享客户端探测固定目标。
+  return invoke<ProxyTestResult>("measure_global_proxy_latency", { url });
 }
 
 /**

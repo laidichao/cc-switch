@@ -15,6 +15,7 @@
 //! - Provider 通过 meta.authBinding 关联账号（auth_provider = "codex_oauth"）
 //! - 本地账号 ID 用于绑定和缓存；chatgpt_account_id 仅表示上游 workspace
 
+use crate::proxy::outbound_stats::TrackedSend;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 use serde::{Deserialize, Serialize};
@@ -463,7 +464,8 @@ impl CodexOAuthManager {
             .header("Content-Type", "application/json")
             .header("User-Agent", CODEX_USER_AGENT)
             .json(&serde_json::json!({ "client_id": CODEX_CLIENT_ID }))
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         if !response.status().is_success() {
@@ -585,7 +587,8 @@ impl CodexOAuthManager {
                 "device_auth_id": device_code,
                 "user_code": user_code,
             }))
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         let status = poll_response.status();
@@ -689,7 +692,8 @@ impl CodexOAuthManager {
                 ("client_id", CODEX_CLIENT_ID),
                 ("code_verifier", code_verifier),
             ])
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         if !response.status().is_success() {
@@ -722,7 +726,8 @@ impl CodexOAuthManager {
                 ("client_id", CODEX_CLIENT_ID),
                 ("scope", "openid profile email"),
             ])
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         let status = response.status();

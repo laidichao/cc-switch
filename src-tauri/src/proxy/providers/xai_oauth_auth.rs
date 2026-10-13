@@ -4,6 +4,7 @@
 //! from xAI's OpenID Connect discovery document so authentication protocol
 //! changes do not require duplicating endpoint constants across the app.
 
+use crate::proxy::outbound_stats::TrackedSend;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -223,7 +224,8 @@ impl XaiOAuthManager {
             .post(&endpoints.device_authorization_endpoint)
             .header("User-Agent", XAI_USER_AGENT)
             .form(&[("client_id", XAI_CLIENT_ID), ("scope", XAI_SCOPE)])
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
 
         let status = response.status();
@@ -301,7 +303,8 @@ impl XaiOAuthManager {
                 ("client_id", XAI_CLIENT_ID),
                 ("device_code", device_code),
             ])
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
         let status = response.status();
         let value = read_json_response(response).await?;
@@ -487,7 +490,8 @@ impl XaiOAuthManager {
         let response = crate::proxy::http_client::get()
             .get(XAI_DISCOVERY_URL)
             .header("User-Agent", XAI_USER_AGENT)
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
         let status = response.status();
         let value = read_json_response(response).await?;
@@ -526,7 +530,8 @@ impl XaiOAuthManager {
                 ("refresh_token", refresh_token),
                 ("scope", XAI_SCOPE),
             ])
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?;
         let status = response.status();
         let value_result = read_json_response(response).await;

@@ -10,6 +10,7 @@
 //!   立即透出错误文案。判定按 reqwest 错误种类在折叠点完成，不依赖错误文案匹配。
 
 use crate::provider::{UsageData, UsageResult};
+use crate::proxy::outbound_stats::TrackedSend;
 use std::time::Duration;
 
 // ── 供应商检测 ──────────────────────────────────────────────
@@ -79,7 +80,8 @@ async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -157,7 +159,8 @@ async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -222,7 +225,8 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -292,7 +296,8 @@ async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -358,7 +363,8 @@ async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {

@@ -27,6 +27,7 @@ use super::{
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
+use crate::proxy::outbound_stats::TrackedSend;
 use crate::proxy::providers::copilot_auth::{CopilotAuthError, CopilotAuthManager};
 use crate::proxy::providers::copilot_model_map::{
     CopilotProtocol, CopilotTransport, ResolvedCopilotModel,
@@ -2742,7 +2743,10 @@ impl RequestForwarder {
             for (key, value) in &ordered_headers {
                 request = request.header(key, value);
             }
-            let send = request.body(body_bytes).send();
+            let send = request
+                .body(body_bytes)
+                // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+                .send_tracked();
             let send_result = if request_is_streaming {
                 let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
                     timeout

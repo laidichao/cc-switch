@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 /// 获取全局代理 URL
 ///
-/// 返回当前配置的代理 URL，null 表示直连。
+/// 返回保存的代理 URL，关闭开关时仍返回配置；null 表示未配置。
 #[tauri::command]
 pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
     let result = state.db.get_global_proxy_url().map_err(|e| e.to_string())?;
@@ -24,9 +24,78 @@ pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<
     Ok(result)
 }
 
+/// 获取持久化的全局出站代理开关。
+#[tauri::command]
+pub fn get_global_proxy_enabled(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    // 读取开关并兼容尚未保存开关的旧配置。
+    state
+        .db
+        .get_global_proxy_enabled()
+        .map_err(|error| error.to_string())
+}
+
+/// 切换全局出站代理，保留地址及认证；运行态失败时恢复开关和客户端。
+#[tauri::command]
+pub async fn set_global_proxy_enabled(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    // 1. 与地址保存及桌面代理启停共用锁，避免依赖状态在检查后改变。
+    let _gate = state.codex_desktop_proxy.gate.lock().await;
+    // 桌面入口开启时必须保留其上游，先要求关闭桌面入口。
+    let desktop_enabled = state
+        .db
+        .get_bool_flag(crate::codex_desktop_proxy::ENABLED_KEY)
+        .map_err(|error| error.to_string())?;
+    if !enabled && desktop_enabled {
+        return Err("请先关闭 Codex 桌面代理 / Disable the Codex desktop proxy first".into());
+    }
+    // 读取已保存地址，启用前要求存在可用配置。
+    let saved = state
+        .db
+        .get_global_proxy_url()
+        .map_err(|error| error.to_string())?;
+    if enabled && saved.is_none() {
+        return Err("请先保存代理地址 / Save a proxy address first".into());
+    }
+    let effective = if enabled { saved.as_deref() } else { None };
+    // 构建客户端前验证配置，不执行网络请求。
+    http_client::validate_proxy(effective)?;
+    // 2. 保存原状态供运行态更新失败时恢复。
+    let previous = state
+        .db
+        .get_global_proxy_enabled()
+        .map_err(|error| error.to_string())?;
+    // 只写开关，保留代理地址和认证配置。
+    state
+        .db
+        .set_setting(
+            "global_proxy_enabled",
+            if enabled { "true" } else { "false" },
+        )
+        .map_err(|error| error.to_string())?;
+    // 3. 热更新共享客户端；失败时恢复持久化状态及旧客户端。
+    if let Err(error) = http_client::apply_proxy(effective) {
+        // 恢复原开关，避免重启后应用失败的状态。
+        state
+            .db
+            .set_setting(
+                "global_proxy_enabled",
+                if previous { "true" } else { "false" },
+            )
+            .map_err(|failure| format!("{error}; restore failed: {failure}"))?;
+        let previous_url = if previous { saved.as_deref() } else { None };
+        // 恢复可能已部分更新的共享客户端。
+        http_client::apply_proxy(previous_url)
+            .map_err(|failure| format!("{error}; client restore failed: {failure}"))?;
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// 设置全局代理 URL
 ///
-/// - 传入非空字符串：启用代理
+/// - 传入非空字符串：保存代理，独立开关关闭时不启用
 /// - 传入空字符串：清除代理（直连）
 ///
 /// 执行顺序：先验证 → 写 DB → 再应用
@@ -70,27 +139,40 @@ pub async fn set_global_proxy_url(
         .db
         .get_global_proxy_url()
         .map_err(|error| error.to_string())?;
+    // 读取原开关，关闭时保存地址不启用显式出站代理。
+    let previous_enabled = state
+        .db
+        .get_global_proxy_enabled()
+        .map_err(|error| error.to_string())?;
+    // 首次保存且没有显式关闭记录时沿用原有自动启用行为。
+    let enabled_flag = state
+        .db
+        .get_setting("global_proxy_enabled")
+        .map_err(|error| error.to_string())?;
+    let effective_url =
+        url_opt.filter(|_| matches!(enabled_flag.as_deref(), None | Some("true") | Some("1")));
+    // 写入新地址，但保留独立开关。
     state
         .db
         .set_global_proxy_url(url_opt)
         .map_err(|e| e.to_string())?;
 
     // 3. DB 写入成功后再应用到运行态
-    if let Err(error) = http_client::apply_proxy(url_opt) {
+    if let Err(error) = http_client::apply_proxy(effective_url) {
         // 回滚数据库；共享客户端可能已完成部分更新，因此也恢复原客户端配置。
         state
             .db
             .set_global_proxy_url(previous.as_deref())
             .map_err(|failure| format!("{error}; restore failed: {failure}"))?;
         // 确保 CCS 转发与桌面入口重新使用同一个上游。
-        http_client::apply_proxy(previous.as_deref())
+        http_client::apply_proxy(previous.as_deref().filter(|_| previous_enabled))
             .map_err(|failure| format!("{error}; client restore failed: {failure}"))?;
         return Err(error);
     }
 
     log::info!(
         "[GlobalProxy] [GP-009] Configuration updated: {}",
-        url_opt
+        effective_url
             .map(http_client::mask_url)
             .unwrap_or_else(|| "direct connection".to_string())
     );
@@ -214,7 +296,51 @@ pub fn get_upstream_proxy_status() -> UpstreamProxyStatus {
     UpstreamProxyStatus {
         enabled: url.is_some(),
         proxy_url: url,
+        // 返回当前配置周期的计数，前端据此区分网络失败与 HTTP 错误。
+        stats: crate::proxy::outbound_stats::snapshot(),
     }
+}
+
+/// 测量已启用代理到固定检测地址的响应头延迟，不计入业务请求成功率。
+#[tauri::command]
+pub async fn measure_global_proxy_latency(
+    state: tauri::State<'_, AppState>,
+    url: String,
+) -> Result<ProxyTestResult, String> {
+    // 1. 与代理切换共用锁，只在配置匹配时取得当前客户端。
+    let client = {
+        let _gate = state.codex_desktop_proxy.gate.lock().await;
+        // 校验前端图表对应的地址仍是已启用的配置，避免切换后混入旧结果。
+        let current = state
+            .db
+            .get_effective_global_proxy_url()
+            .map_err(|_| "Unable to read proxy configuration")?;
+        if current.as_deref() != Some(url.as_str()) {
+            return Err("Proxy configuration changed or disabled".into());
+        }
+        // 复用全局客户端连接池，不新建代理配置或持有锁进行网络等待。
+        http_client::get()
+    };
+    // 2. 固定 HEAD 请求测量连接及响应头耗时，最多等待 10 秒。
+    let start = Instant::now();
+    let result = client
+        .head("https://httpbin.org/get")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await;
+    let latency_ms = start.elapsed().as_millis() as u64;
+    // 3. 探测失败不填入虚假的零延迟，也不输出代理地址和认证数据。
+    let (success, error) = match result {
+        Ok(response) if response.status().is_success() => (true, None),
+        Ok(response) => (false, Some(format!("HTTP {}", response.status().as_u16()))),
+        Err(error) if error.is_timeout() => (false, Some("Request timed out".into())),
+        Err(_) => (false, Some("Connection or TLS failure".into())),
+    };
+    Ok(ProxyTestResult {
+        success,
+        latency_ms,
+        error,
+    })
 }
 
 /// 出站代理状态信息
@@ -225,6 +351,8 @@ pub struct UpstreamProxyStatus {
     pub enabled: bool,
     /// 代理 URL
     pub proxy_url: Option<String>,
+    /// 当前配置周期内实际完成的出站请求统计。
+    pub stats: crate::proxy::outbound_stats::OutboundStats,
 }
 
 /// 检测到的代理信息

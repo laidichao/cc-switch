@@ -135,6 +135,9 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
             .unwrap_or_else(|| "direct connection".to_string())
     );
 
+    // 客户端与地址均更新成功后清空旧周期计数，保留在途请求的原周期。
+    super::outbound_stats::reset();
+
     Ok(())
 }
 

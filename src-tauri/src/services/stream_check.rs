@@ -16,6 +16,7 @@
 //! 算"可达"，但它对真实流量是坏的。熔断器只由 `proxy/forwarder.rs` 转发真实流量
 //! 的成败驱动（被动）。两者职责分离——可达性回答"能不能到"，真实流量回答"能不能用"。
 
+use crate::proxy::outbound_stats::TrackedSend;
 use reqwest::header::HeaderValue;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -215,7 +216,11 @@ impl StreamCheckService {
             req = req.header("user-agent", ua);
         }
 
-        match req.send().await {
+        match req
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
+            .await
+        {
             Ok(resp) => Ok(resp.status().as_u16()),
             Err(e) => Err(Self::map_request_error(e)),
         }

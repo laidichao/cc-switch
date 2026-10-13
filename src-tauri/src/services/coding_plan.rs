@@ -6,6 +6,7 @@
 use super::subscription::{
     CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
 };
+use crate::proxy::outbound_stats::TrackedSend;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ── 供应商检测 ──────────────────────────────────────────────
@@ -127,7 +128,8 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -352,7 +354,8 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> Result<SubscriptionQuota,
         .header("Content-Type", "application/json")
         .header("Accept-Language", "en-US,en")
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -454,7 +457,8 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -536,7 +540,8 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -793,7 +798,8 @@ async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -896,7 +902,8 @@ async fn fetch_command_code_json(
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .map_err(|e| format!("Network error: {e}"))?;
 
@@ -1368,7 +1375,8 @@ async fn volcengine_openapi_call(
         .header("Authorization", authorization)
         .body(body.to_vec())
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -1677,7 +1685,8 @@ async fn query_zhipu_team_at(
         .header("Content-Type", "application/json")
         .header("Accept-Language", "en-US,en")
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {

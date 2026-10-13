@@ -14,6 +14,7 @@
 //!   用 refresh_token 换新），本模块只读不刷新；过期但仍有 refresh_token 时
 //!   报“待刷新”，刷新令牌也没了才引导用户重新 `grok login`。
 
+use crate::proxy::outbound_stats::TrackedSend;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -587,7 +588,8 @@ pub(crate) async fn query_grok_quota(
         .header("User-Agent", "cc-switch")
         .body(vec![0u8; 5])
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {

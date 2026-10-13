@@ -1,5 +1,6 @@
 //! xAI OAuth state and xAI-specific commands.
 
+use crate::proxy::outbound_stats::TrackedSend;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::proxy::providers::XAI_API_BASE_URL;
 use crate::services::model_fetch::FetchedModel;
@@ -111,7 +112,8 @@ pub async fn get_xai_oauth_models(
         .get(format!("{XAI_API_BASE_URL}/models"))
         .bearer_auth(token)
         .timeout(Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .map_err(|error| format!("xAI models request failed: {error}"))?;
     let status = response.status();

@@ -265,6 +265,8 @@ pub async fn send_request(
     timeout: std::time::Duration,
     proxy_url: Option<&str>,
 ) -> Result<ProxyResponse, ProxyError> {
+    // 绑定当前统计周期，所有返回和超时取消都由本次尝试统一结算。
+    let mut attempt = super::outbound_stats::OutboundAttempt::new(false);
     // Extract our own OriginalHeaderCases if available
     let original_cases = original_extensions.get::<OriginalHeaderCases>().cloned();
     let has_cases = original_cases
@@ -293,7 +295,11 @@ pub async fn send_request(
         .map_err(|_| ProxyError::Timeout(format!("请求超时: {}s", timeout.as_secs())))?;
 
         match result {
-            Ok(resp) => return Ok(resp),
+            Ok(resp) => {
+                // 原始头转发成功收到响应，按 HTTP 状态记录一次。
+                attempt.finish(Some(resp.status().as_u16()));
+                return Ok(resp);
+            }
             Err(e) => {
                 if proxy_url.is_some() {
                     // Don't bypass configured proxy with direct connect fallback
@@ -321,6 +327,8 @@ pub async fn send_request(
         .map_err(|_| ProxyError::Timeout(format!("请求超时: {}s", timeout.as_secs())))?
         .map_err(|e| ProxyError::ForwardFailed(format!("上游请求失败: {e}")))?;
 
+    // fallback 与原始头路径属于同一发送尝试，避免重复统计。
+    attempt.finish(Some(resp.status().as_u16()));
     Ok(ProxyResponse::Hyper(resp))
 }
 

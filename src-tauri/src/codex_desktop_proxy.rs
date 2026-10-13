@@ -241,7 +241,7 @@ pub(crate) fn validate_upstream(value: Option<&str>) -> Result<(), String> {
 async fn activate(db: Arc<Database>, runtime: &mut Runtime) -> Result<(), String> {
     // 1. 检查上游与已有系统代理；不替换 VPN 的手动代理或已有 PAC。
     let upstream = db
-        .get_global_proxy_url()
+        .get_effective_global_proxy_url()
         .map_err(|error| error.to_string())?;
     validate_upstream(upstream.as_deref())?;
     let previous = codex_system_proxy::read()?;
@@ -587,9 +587,11 @@ async fn open_upstream(
     host: &str,
     pac_port: u16,
 ) -> Result<crate::proxy::hyper_client::ProxyStream, String> {
+    // 桌面入口以 CONNECT 建立结果单独统计，不与 HTTP 请求成功率混算。
+    let mut attempt = crate::proxy::outbound_stats::OutboundAttempt::new(true);
     // 1. 每次连接读取现有代理设置，不在 hosts 或参数中保存认证。
     let proxy = db
-        .get_global_proxy_url()
+        .get_effective_global_proxy_url()
         .map_err(|error| error.to_string())?;
     validate_upstream(proxy.as_deref())?;
     let proxy = proxy.ok_or("Missing upstream proxy")?;
@@ -613,6 +615,10 @@ async fn open_upstream(
     )
     .await
     .map_err(|_| "Upstream CONNECT timed out")?;
+    if result.is_ok() {
+        // 隧道建立成功；后续登录或长连接传输结果不由此指标推断。
+        attempt.finish(Some(200));
+    }
     result.map_err(|error| error.to_string())
 }
 

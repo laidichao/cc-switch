@@ -28,6 +28,7 @@
 //! `config.toml` 暂时解析不了），而缓存这时已经是新的，之后的刷新只会得到 304 或同样的
 //! 列表。所以「客户端落后于缓存」单独记一个标记，重写成功才清掉，每个检查点都看它。
 
+use crate::proxy::outbound_stats::TrackedSend;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -317,7 +318,11 @@ fn fetch_models(login: &OfficialLogin, version: &str, etag: Option<&str>) -> Fet
             if let Some(etag) = etag {
                 request = request.header("If-None-Match", etag);
             }
-            let response = match request.send().await {
+            let response = match request
+                // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+                .send_tracked()
+                .await
+            {
                 Ok(response) => response,
                 Err(error) => return Fetch::Failed(format!("网络错误: {error}")),
             };

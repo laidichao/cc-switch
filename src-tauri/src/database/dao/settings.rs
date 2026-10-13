@@ -148,6 +148,25 @@ impl Database {
         self.get_setting(Self::GLOBAL_PROXY_URL_KEY)
     }
 
+    /// 获取全局代理开关；旧配置没有开关键时沿用已保存地址的启用状态。
+    pub fn get_global_proxy_enabled(&self) -> Result<bool, AppError> {
+        // 1. 无地址时不能启用代理；缺少开关键的旧配置保持原行为。
+        let configured = self.get_global_proxy_url()?.is_some();
+        // 读取独立开关，关闭时仍保留原地址和认证信息。
+        let enabled = self.get_setting("global_proxy_enabled")?;
+        Ok(configured && matches!(enabled.as_deref(), None | Some("true") | Some("1")))
+    }
+
+    /// 获取供运行态使用的代理地址；关闭时无显式代理且不删除配置。
+    pub fn get_effective_global_proxy_url(&self) -> Result<Option<String>, AppError> {
+        // 先检查持久化开关，避免重启后重新启用已关闭的代理。
+        if !self.get_global_proxy_enabled()? {
+            return Ok(None);
+        }
+        // 启用时读取原地址，供共享客户端和桌面转发使用。
+        self.get_global_proxy_url()
+    }
+
     /// 设置全局出站代理 URL
     ///
     /// - 传入非空字符串：启用代理

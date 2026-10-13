@@ -10,6 +10,8 @@ import { useTranslation } from "react-i18next";
 import {
   getGlobalProxyUrl,
   setGlobalProxyUrl,
+  getGlobalProxyEnabled,
+  setGlobalProxyEnabled,
   testProxyUrl,
   getUpstreamProxyStatus,
   scanLocalProxies,
@@ -31,6 +33,38 @@ export function useGlobalProxyUrl() {
   });
 }
 
+/** 获取全局出站开关，保存地址后重新读取兼容状态。 */
+export function useGlobalProxyEnabled() {
+  return useQuery({
+    queryKey: ["globalProxyEnabled"],
+    queryFn: getGlobalProxyEnabled,
+  });
+}
+
+/** 切换后重新读取持久化和运行态；失败时保留原开关。 */
+export function useSetGlobalProxyEnabled() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+  return useMutation({
+    mutationFn: setGlobalProxyEnabled,
+    onSuccess: () => {
+      toast.success(t("settings.globalProxy.saved"));
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(t("settings.globalProxy.saveFailed", { error: message }));
+    },
+    onSettled: () => {
+      // 切换失败也重新读取，避免前端显示未经后端确认的状态。
+      queryClient.invalidateQueries({ queryKey: ["globalProxyEnabled"] });
+      // 共享客户端更新后刷新实际出站状态。
+      queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
+      // 桌面转发依赖出站开关，同步其就绪状态。
+      queryClient.invalidateQueries({ queryKey: ["codexDesktopProxyStatus"] });
+    },
+  });
+}
+
 /**
  * 设置全局代理 URL
  */
@@ -43,6 +77,8 @@ export function useSetGlobalProxyUrl() {
     onSuccess: () => {
       toast.success(t("settings.globalProxy.saved"));
       queryClient.invalidateQueries({ queryKey: ["globalProxyUrl"] });
+      // 首次保存或清空地址可能改变启用状态。
+      queryClient.invalidateQueries({ queryKey: ["globalProxyEnabled"] });
       queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
       queryClient.invalidateQueries({ queryKey: ["codexDesktopProxyStatus"] });
     },
@@ -90,6 +126,8 @@ export function useUpstreamProxyStatus() {
   return useQuery<UpstreamProxyStatus>({
     queryKey: ["upstreamProxyStatus"],
     queryFn: getUpstreamProxyStatus,
+    // 仅刷新本地计数，不发送出站探测请求；设置页卸载后停止。
+    refetchInterval: 5000,
   });
 }
 

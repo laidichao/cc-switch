@@ -1217,7 +1217,8 @@ pub fn run() {
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
-                let proxy_url = db.get_global_proxy_url().ok().flatten();
+                // 根据持久化开关恢复有效代理；关闭时保留配置并沿用系统代理逻辑。
+                let proxy_url = db.get_effective_global_proxy_url().ok().flatten();
 
                 if let Err(e) = crate::proxy::http_client::init(proxy_url.as_deref()) {
                     log::error!(
@@ -1734,10 +1735,13 @@ pub fn run() {
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
+            commands::get_global_proxy_enabled,
+            commands::set_global_proxy_enabled,
             commands::get_codex_desktop_proxy_status,
             commands::set_codex_desktop_proxy_enabled,
             commands::test_proxy_url,
             commands::get_upstream_proxy_status,
+            commands::measure_global_proxy_latency,
             commands::scan_local_proxies,
             // Window theme control
             commands::set_window_theme,

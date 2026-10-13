@@ -1,3 +1,4 @@
+use crate::proxy::outbound_stats::TrackedSend;
 use futures::future::join_all;
 use reqwest::{Client, Url};
 use serde::Serialize;
@@ -74,12 +75,19 @@ impl SpeedtestService {
                 let _ = client
                     .get(parsed_url.clone())
                     .timeout(request_timeout)
-                    .send()
+                    // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+                    .send_tracked()
                     .await;
 
                 // 第二次请求开始计时，并将其作为结果返回。
                 let start = Instant::now();
-                let latency = match client.get(parsed_url).timeout(request_timeout).send().await {
+                let latency = match client
+                    .get(parsed_url)
+                    .timeout(request_timeout)
+                    // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+                    .send_tracked()
+                    .await
+                {
                     Ok(resp) => EndpointLatency {
                         url: trimmed,
                         latency: Some(start.elapsed().as_millis()),

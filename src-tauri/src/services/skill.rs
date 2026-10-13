@@ -5,6 +5,7 @@
 //! - 安装时下载到 SSOT，按需同步到各应用目录
 //! - 数据库存储安装记录和启用状态
 
+use crate::proxy::outbound_stats::TrackedSend;
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -3580,7 +3581,11 @@ impl SkillService {
     /// 下载并解压 ZIP
     async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
         let client = crate::proxy::http_client::get();
-        let response = client.get(url).send().await?;
+        let response = client
+            .get(url)
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
+            .await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(
@@ -4441,7 +4446,8 @@ impl SkillService {
         let resp = client
             .get(url)
             .timeout(std::time::Duration::from_secs(10))
-            .send()
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
             .await?
             .error_for_status()?
             .json::<SkillsShApiResponse>()

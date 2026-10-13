@@ -4,6 +4,7 @@
 //! Implements AWS Signature Version 4 request signing.
 //! The sync protocol logic lives in the upcoming `s3_sync` module.
 
+use crate::proxy::outbound_stats::TrackedSend;
 use reqwest::StatusCode;
 use std::time::Duration;
 use url::Url;
@@ -348,7 +349,8 @@ pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppErro
         .head(url.as_str())
         .headers(headers)
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .map_err(|e| s3_transport_error("s3.connection_failed", "连接", "connection", &e))?;
 
@@ -392,7 +394,8 @@ pub(crate) async fn put_object(
         .headers(headers)
         .body(bytes)
         .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .map_err(|e| s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", &e))?;
 
@@ -435,7 +438,8 @@ pub(crate) async fn get_object(
         .get(url.as_str())
         .headers(headers)
         .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .map_err(|e| s3_transport_error("s3.get_failed", "GET 请求", "GET request", &e))?;
 
@@ -501,7 +505,8 @@ pub(crate) async fn head_object(
         .head(url.as_str())
         .headers(headers)
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .map_err(|e| s3_transport_error("s3.head_failed", "HEAD 请求", "HEAD request", &e))?;
 

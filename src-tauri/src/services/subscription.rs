@@ -3,6 +3,7 @@
 //! 读取 CLI 工具的已有 OAuth 凭据，查询官方订阅额度。
 //! 第一层：仅读取凭据，不实现登录/刷新。
 
+use crate::proxy::outbound_stats::TrackedSend;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -403,7 +404,8 @@ async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         .header("anthropic-beta", "oauth-2025-04-20")
         .header("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let resp = match resp {
@@ -936,7 +938,8 @@ async fn query_codex_reset_credits(
     }
     let resp = req
         .timeout(std::time::Duration::from_secs(8))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .ok()?;
     if !resp.status().is_success() {
@@ -987,7 +990,12 @@ async fn query_codex_usage(
         req = req.header("ChatGPT-Account-Id", id);
     }
 
-    let resp = match req.timeout(std::time::Duration::from_secs(15)).send().await {
+    let resp = match req
+        .timeout(std::time::Duration::from_secs(15))
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
+        .await
+    {
         Ok(r) => r,
         Err(e) => return Err(format!("Network error: {e}")),
     };
@@ -1284,7 +1292,8 @@ async fn refresh_gemini_token(refresh_token: &str) -> Option<String> {
             ("grant_type", "refresh_token"),
         ])
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .ok()?;
 
@@ -1368,7 +1377,8 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
             }
         }))
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let load_resp = match load_resp {
@@ -1427,7 +1437,8 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         .header("Content-Type", "application/json")
         .json(&quota_body)
         .timeout(std::time::Duration::from_secs(15))
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await;
 
     let quota_resp = match quota_resp {

@@ -11,10 +11,14 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { HelpTip } from "@/components/ui/help-tip";
+import { GlobalProxyLatencyChart } from "./GlobalProxyLatencyChart";
 import { Loader2, TestTube2, Search, Eye, EyeOff, X } from "lucide-react";
 import {
   useGlobalProxyUrl,
   useSetGlobalProxyUrl,
+  useGlobalProxyEnabled,
+  useSetGlobalProxyEnabled,
+  useUpstreamProxyStatus,
   useTestProxy,
   useScanProxies,
   useCodexDesktopProxyStatus,
@@ -78,6 +82,20 @@ export function GlobalProxySettings() {
   const { t } = useTranslation();
   const { data: savedUrl, isLoading } = useGlobalProxyUrl();
   const setMutation = useSetGlobalProxyUrl();
+  // 读取后端保存的独立开关，切换时只刷新状态而不重填表单。
+  const enabledQuery = useGlobalProxyEnabled();
+  // 使用后端热更新入口保留地址及认证信息。
+  const enabledMutation = useSetGlobalProxyEnabled();
+  // 在设置页显示实际请求计数，刷新只读取本地状态。
+  const upstreamQuery = useUpstreamProxyStatus();
+  const stats = upstreamQuery.data?.stats;
+  const total = stats
+    ? stats.successful + stats.networkFailures + stats.httpErrors
+    : 0;
+  const successRate =
+    total && stats
+      ? `${((stats.successful / total) * 100).toFixed(1)}%`
+      : t("settings.globalProxy.noRequests");
   const testMutation = useTestProxy();
   const scanMutation = useScanProxies();
   const desktopQuery = useCodexDesktopProxyStatus();
@@ -98,18 +116,24 @@ export function GlobalProxySettings() {
 
   // 同步远程配置
   useEffect(() => {
-    if (savedUrl !== undefined) {
+    if (savedUrl !== undefined && !dirty && !setMutation.isPending) {
+      // 只同步未编辑的表单，避免开关或窗口刷新覆盖尚未保存的内容。
       const { baseUrl, username: u, password: p } = extractAuth(savedUrl || "");
       setUrl(baseUrl);
       setUsername(u);
       setPassword(p);
       setDirty(false);
     }
-  }, [savedUrl]);
+  }, [savedUrl, dirty, setMutation.isPending]);
 
   const handleSave = async () => {
-    await setMutation.mutateAsync(fullUrl);
-    setDirty(false);
+    // 保存失败时保留表单，错误提示由 mutation 统一显示。
+    try {
+      await setMutation.mutateAsync(fullUrl);
+      setDirty(false);
+    } catch {
+      // 后端未确认新配置，保持可继续编辑和保存。
+    }
   };
 
   const handleTest = async () => {
@@ -140,7 +164,14 @@ export function GlobalProxySettings() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && dirty && !setMutation.isPending) {
+    if (
+      e.key === "Enter" &&
+      dirty &&
+      !setMutation.isPending &&
+      !enabledMutation.isPending &&
+      !desktopMutation.isPending
+    ) {
+      // 与保存按钮使用同样的互斥条件，避免快捷键绕过切换状态。
       handleSave();
     }
   };
@@ -148,6 +179,12 @@ export function GlobalProxySettings() {
   const handleDesktopChange = (enabled: boolean) => {
     // 后端返回成功后再更新开关，避免系统代理失败却显示已经开启。
     desktopMutation.mutate(enabled);
+  };
+
+  /** 以后端结果更新开关，关闭时不清空表单。 */
+  const handleEnabledChange = (enabled: boolean) => {
+    // 使用已保存地址切换；失败后重新读取实际状态。
+    enabledMutation.mutate(enabled);
   };
 
   // 帮助卡与无障碍状态共用文案，保留原有代理就绪判断。
@@ -182,11 +219,99 @@ export function GlobalProxySettings() {
       {/* 描述 */}
       <p className="text-sm text-fg-2">{t("settings.globalProxy.hint")}</p>
 
+      <div className="flex min-h-11 items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-1">
+          <label
+            htmlFor="global-outbound-proxy"
+            className="text-sm font-medium"
+          >
+            {t("settings.globalProxy.enableLabel")}
+          </label>
+          <HelpTip
+            title={t("settings.globalProxy.enableLabel")}
+            className="h-11 w-11"
+          >
+            <p className="text-xs text-fg-2">
+              {t("settings.globalProxy.enableHint")}
+            </p>
+          </HelpTip>
+        </div>
+        <Switch
+          id="global-outbound-proxy"
+          checked={enabledQuery.data ?? false}
+          disabled={
+            enabledQuery.isLoading ||
+            enabledQuery.isError ||
+            enabledQuery.isFetching ||
+            enabledMutation.isPending ||
+            setMutation.isPending ||
+            desktopMutation.isPending ||
+            Boolean(desktopQuery.data?.enabled) ||
+            (!enabledQuery.data && (dirty || !savedUrl))
+          }
+          onCheckedChange={handleEnabledChange}
+        />
+      </div>
+
+      <div
+        className="rounded-md border p-3 text-sm"
+        role="status"
+        aria-live="polite"
+      >
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span>
+            {t("settings.globalProxy.successRate")}:{" "}
+            {upstreamQuery.isError
+              ? t("settings.globalProxy.statsReadFailed")
+              : upstreamQuery.isLoading
+                ? t("common.loading")
+                : successRate}
+          </span>
+          <HelpTip
+            title={t("settings.globalProxy.successRate")}
+            className="h-11 w-11"
+          >
+            <p className="text-xs text-fg-2">
+              {t("settings.globalProxy.statsHint")}
+            </p>
+          </HelpTip>
+        </div>
+        {stats && (
+          <p className="text-xs text-fg-2">
+            {t("settings.globalProxy.statsCounts", {
+              total,
+              successful: stats.successful,
+              network: stats.networkFailures,
+              http: stats.httpErrors,
+            })}
+          </p>
+        )}
+        {stats && stats.tunnelSuccessful + stats.tunnelFailures > 0 && (
+          <p className="mt-1 text-xs text-fg-2">
+            {t("settings.globalProxy.tunnelCounts", {
+              successful: stats.tunnelSuccessful,
+              failed: stats.tunnelFailures,
+            })}
+          </p>
+        )}
+      </div>
+
       {/* 代理地址输入框和按钮 */}
+      <GlobalProxyLatencyChart
+        key={`${savedUrl ?? ""}:${enabledQuery.data ?? false}`}
+        proxyUrl={savedUrl ?? ""}
+        enabled={
+          Boolean(enabledQuery.data) &&
+          !setMutation.isPending &&
+          !enabledMutation.isPending
+        }
+      />
+
       <div className="flex gap-2">
         <Input
           placeholder="http://127.0.0.1:7890 / socks5://127.0.0.1:1080"
           value={url}
+          disabled={setMutation.isPending || enabledMutation.isPending}
           onChange={(e) => {
             setUrl(e.target.value);
             setDirty(true);
@@ -198,7 +323,11 @@ export function GlobalProxySettings() {
           <Button
             variant="outline"
             size="icon"
-            disabled={scanMutation.isPending}
+            disabled={
+              scanMutation.isPending ||
+              setMutation.isPending ||
+              enabledMutation.isPending
+            }
             onClick={handleScan}
             aria-label={t("settings.globalProxy.scan")}
           >
@@ -228,7 +357,11 @@ export function GlobalProxySettings() {
           <Button
             variant="outline"
             size="icon"
-            disabled={!url && !username && !password}
+            disabled={
+              (!url && !username && !password) ||
+              setMutation.isPending ||
+              enabledMutation.isPending
+            }
             onClick={handleClear}
             aria-label={t("settings.globalProxy.clear")}
           >
@@ -238,7 +371,10 @@ export function GlobalProxySettings() {
         <Button
           onClick={handleSave}
           disabled={
-            !dirty || setMutation.isPending || desktopMutation.isPending
+            !dirty ||
+            setMutation.isPending ||
+            desktopMutation.isPending ||
+            enabledMutation.isPending
           }
           size="sm"
         >
@@ -254,6 +390,7 @@ export function GlobalProxySettings() {
         <Input
           placeholder={t("settings.globalProxy.username")}
           value={username}
+          disabled={setMutation.isPending || enabledMutation.isPending}
           onChange={(e) => {
             setUsername(e.target.value);
             setDirty(true);
@@ -266,6 +403,7 @@ export function GlobalProxySettings() {
             type={showPassword ? "text" : "password"}
             placeholder={t("settings.globalProxy.password")}
             value={password}
+            disabled={setMutation.isPending || enabledMutation.isPending}
             onChange={(e) => {
               setPassword(e.target.value);
               setDirty(true);
@@ -320,7 +458,10 @@ export function GlobalProxySettings() {
               (!desktopQuery.data?.supported && !desktopQuery.data?.enabled) ||
               desktopMutation.isPending ||
               setMutation.isPending ||
-              (!desktopQuery.data?.enabled && (dirty || !savedUrl))
+              enabledMutation.isPending ||
+              enabledQuery.isFetching ||
+              (!desktopQuery.data?.enabled &&
+                (dirty || !savedUrl || !enabledQuery.data))
             }
             onCheckedChange={handleDesktopChange}
           />
@@ -339,6 +480,7 @@ export function GlobalProxySettings() {
               variant="secondary"
               size="sm"
               onClick={() => handleSelect(p.url)}
+              disabled={setMutation.isPending || enabledMutation.isPending}
               className="font-mono text-xs"
             >
               {p.url}

@@ -3,6 +3,7 @@
 //! Low-level HTTP primitives for WebDAV operations (PUT, GET, HEAD, MKCOL, PROPFIND).
 //! The sync protocol logic lives in [`super::webdav_sync`].
 
+use crate::proxy::outbound_stats::TrackedSend;
 use reqwest::{Method, RequestBuilder, StatusCode, Url};
 use std::time::Duration;
 
@@ -140,7 +141,8 @@ pub async fn test_connection(base_url: &str, auth: &WebDavAuth) -> Result<(), Ap
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
         auth,
     )
-    .send()
+    // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+    .send_tracked()
     .await
     .map_err(|e| {
         webdav_transport_error(
@@ -187,7 +189,8 @@ pub async fn ensure_remote_directories(
                 .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
             auth,
         )
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .map_err(|e| {
             webdav_transport_error(
@@ -237,7 +240,8 @@ pub async fn put_bytes(
             .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
         auth,
     )
-    .send()
+    // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+    .send_tracked()
     .await
     .map_err(|e| webdav_transport_error("webdav.put_failed", "PUT 请求", "PUT request", url, &e))?;
 
@@ -262,7 +266,8 @@ pub async fn get_bytes(
             .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
         auth,
     )
-    .send()
+    // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+    .send_tracked()
     .await
     .map_err(|e| webdav_transport_error("webdav.get_failed", "GET 请求", "GET request", url, &e))?;
 
@@ -306,7 +311,8 @@ pub async fn head_etag(url: &str, auth: &WebDavAuth) -> Result<Option<String>, A
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
         auth,
     )
-    .send()
+    // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+    .send_tracked()
     .await
     .map_err(|e| {
         webdav_transport_error("webdav.head_failed", "HEAD 请求", "HEAD request", url, &e)
@@ -340,7 +346,8 @@ async fn propfind_exists(
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
         auth,
     )
-    .send()
+    // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+    .send_tracked()
     .await;
     match resp {
         Ok(r) => Ok(r.status().is_success() || r.status() == StatusCode::MULTI_STATUS),

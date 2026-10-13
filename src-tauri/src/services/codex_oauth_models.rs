@@ -3,6 +3,7 @@
 //! ChatGPT Codex exposes models through `chatgpt.com/backend-api/codex/models`,
 //! which is not an OpenAI-compatible `/v1/models` endpoint.
 
+use crate::proxy::outbound_stats::TrackedSend;
 use crate::proxy::providers::codex_oauth_auth::{
     CODEX_OAUTH_CLIENT_VERSION, CODEX_OAUTH_ORIGINATOR,
 };
@@ -20,7 +21,8 @@ pub async fn fetch_models_with_token(
 ) -> Result<Vec<FetchedModel>, String> {
     let client = crate::proxy::http_client::get();
     let response = build_models_request(&client, token, account_id)
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .map_err(|e| format!("Request failed: {e}"))?;
 

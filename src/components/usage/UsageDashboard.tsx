@@ -42,6 +42,10 @@ import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import { usageApi } from "@/lib/api/usage";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { cn } from "@/lib/utils";
+import {
+  REFRESH_INTERVAL_OPTIONS_MS,
+  normalizeRefreshInterval,
+} from "@/lib/usageRefreshInterval";
 import { UsageHero } from "./UsageHero";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
@@ -54,18 +58,6 @@ import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
-
-const DEFAULT_REFRESH_INTERVAL_MS = 30000;
-const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
-type RefreshIntervalOption = (typeof REFRESH_INTERVAL_OPTIONS_MS)[number];
-
-const isRefreshIntervalOption = (
-  value: number | undefined,
-): value is RefreshIntervalOption =>
-  REFRESH_INTERVAL_OPTIONS_MS.includes(value as RefreshIntervalOption);
-
-const normalizeRefreshInterval = (value: number | undefined) =>
-  isRefreshIntervalOption(value) ? value : DEFAULT_REFRESH_INTERVAL_MS;
 
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 

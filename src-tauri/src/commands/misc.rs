@@ -2,6 +2,7 @@
 
 use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
+use crate::proxy::outbound_stats::TrackedSend;
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -1245,7 +1246,8 @@ async fn fetch_npm_dist_tags(
     let resp = client
         .get(npm_dist_tags_url(package))
         .timeout(LATEST_PROBE_TIMEOUT)
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .ok()?;
     resp.json::<serde_json::Map<String, serde_json::Value>>()
@@ -1278,7 +1280,8 @@ async fn fetch_github_latest_version(client: &reqwest::Client, repo: &str) -> Op
         .header("User-Agent", "cc-switch")
         .header("Accept", "application/vnd.github+json")
         .timeout(LATEST_PROBE_TIMEOUT)
-        .send()
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
         .await
         .ok()?;
     let json = resp.json::<serde_json::Value>().await.ok()?;
@@ -1345,7 +1348,13 @@ async fn fetch_hermes_latest_version(
 /// Helper function to fetch latest version from PyPI
 async fn fetch_pypi_latest_version(client: &reqwest::Client, package: &str) -> Option<String> {
     let url = format!("https://pypi.org/pypi/{package}/json");
-    match client.get(&url).timeout(LATEST_PROBE_TIMEOUT).send().await {
+    match client
+        .get(&url)
+        .timeout(LATEST_PROBE_TIMEOUT)
+        // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+        .send_tracked()
+        .await
+    {
         Ok(resp) => {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
                 json.get("info")

@@ -4,6 +4,7 @@
 //! 主要面向第三方聚合站（硅基流动、OpenRouter 等），以及把 Anthropic
 //! 协议挂在兼容子路径上的官方供应商（DeepSeek、Kimi、智谱 GLM 等）。
 
+use crate::proxy::outbound_stats::TrackedSend;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, USER_AGENT};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -108,7 +109,11 @@ pub async fn fetch_models(
             .get(url)
             .headers(headers.clone())
             .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
-        let response = match request.send().await {
+        let response = match request
+            // 记录实际出站请求的响应头结果，区分网络失败与 HTTP 错误。
+            .send_tracked()
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 return Err(format!("Request failed: {e}"));
