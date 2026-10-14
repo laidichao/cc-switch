@@ -26,6 +26,8 @@ const DOMAINS: &[&str] = &[
     "oaiusercontent.com",
 ];
 const HEAD_LIMIT: usize = 16384;
+// 每个方向 64 KiB，减少大正文转发时的读写次数；128 个隧道的转发缓冲区最多占用 16 MiB。
+const TUNNEL_BUFFER_SIZE: usize = 64 * 1024;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -486,6 +488,11 @@ async fn connection(
     pac_path: &str,
     port: u16,
 ) -> Result<(), String> {
+    // 本地 TLS 握手和交互请求立即发送，避免小包等待合并。
+    stream
+        .set_nodelay(true)
+        .map_err(|error| error.to_string())?;
+
     // 1. 有界读取本地 HTTP 头，保留客户端提前发送的 TLS 字节。
     let mut bytes = Vec::new();
     let head_size = tokio::time::timeout(Duration::from_secs(10), async {
@@ -575,9 +582,15 @@ async fn connection(
         .write_all(&bytes[head_size..])
         .await
         .map_err(|error| error.to_string())?;
-    tokio::io::copy_bidirectional(&mut stream, &mut upstream)
-        .await
-        .map_err(|error| error.to_string())?;
+    // 使用有界缓冲透传大响应，保留双向并发和半关闭行为。
+    tokio::io::copy_bidirectional_with_sizes(
+        &mut stream,
+        &mut upstream,
+        TUNNEL_BUFFER_SIZE,
+        TUNNEL_BUFFER_SIZE,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -623,10 +636,21 @@ async fn open_upstream(
 }
 
 async fn cloud_connection(mut stream: TcpStream, db: &Database, port: u16) -> Result<(), String> {
+    // 固定域名入口同样立即发送 TLS 和 WebSocket 小包。
+    stream
+        .set_nodelay(true)
+        .map_err(|error| error.to_string())?;
+
     // 固定转发公共云域名；HTTPS/TLS 和 WebSocket 帧都保持原字节。
     let mut upstream = open_upstream(db, crate::codex_hosts::CLOUD_HOST, port).await?;
-    tokio::io::copy_bidirectional(&mut stream, &mut upstream)
-        .await
-        .map_err(|error| error.to_string())?;
+    // 两个入口采用相同有界缓冲，避免公共云长连接仍使用默认小缓冲。
+    tokio::io::copy_bidirectional_with_sizes(
+        &mut stream,
+        &mut upstream,
+        TUNNEL_BUFFER_SIZE,
+        TUNNEL_BUFFER_SIZE,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(())
 }

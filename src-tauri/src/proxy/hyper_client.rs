@@ -524,6 +524,10 @@ pub(crate) async fn connect_via_proxy(
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("Proxy TCP connect failed: {e}")))?;
 
+    // 上游连接立即发送 CONNECT、TLS 和交互小包，减少等待 TCP 合并的延迟。
+    tcp.set_nodelay(true)
+        .map_err(|e| ProxyError::ForwardFailed(format!("Proxy TCP_NODELAY failed: {e}")))?;
+
     // Wrap with TLS if the proxy URL uses https://
     let mut stream: ProxyStream = if parsed.scheme() == "https" {
         let tls_connector = global_tls_connector();
